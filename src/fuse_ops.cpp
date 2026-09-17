@@ -37,17 +37,58 @@ static int kfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_in
 
 static int kfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info* fi, enum fuse_readdir_flags flags) {
-    if (std::strcmp(path, "/") != 0) return -ENOENT;
+    // Yol çözümlemesi için string dönüşümü
+    std::string dir_path = path;
+    if (dir_path == "/") {
+        dir_path = "";
+    } else if (dir_path.rfind('/', 0) == 0) {
+        dir_path = dir_path.substr(1); // Baştaki '/' işaretini kaldır
+    }
+
+    // Eğer kök dizin değilse, istenen dizinin gerçekten var olup olmadığını kontrol et
+    if (!dir_path.empty()) {
+        bool dir_found = false;
+        for (size_t i = 0; i < g_kry_inodes.size(); i++) {
+            if (g_kry_inodes[i].is_used && g_kry_inodes[i].is_directory) {
+                if (std::strcmp(g_kry_inodes[i].filename, dir_path.c_str()) == 0) {
+                    dir_found = true;
+                    break;
+                }
+            }
+        }
+        if (!dir_found) {
+            return -ENOENT;
+        }
+    }
 
     filler(buf, ".", NULL, 0, (fuse_fill_dir_flags)0);
     filler(buf, "..", NULL, 0, (fuse_fill_dir_flags)0);
 
-    std::cout << "[FUSE DEBUG] readdir cagrildi. Toplam inode sayisi: " << g_kry_inodes.size() << std::endl;
+    std::cout << "[FUSE DEBUG] readdir cagrildi. Yol: " << path << ", Toplam inode sayisi: " << g_kry_inodes.size() << std::endl;
+
+    std::string prefix = dir_path.empty() ? "" : dir_path + "/";
 
     for (size_t i = 0; i < g_kry_inodes.size(); i++) {
         if (g_kry_inodes[i].is_used) {
-            std::cout << "[FUSE DEBUG] Bulunan dosya/klasor: " << g_kry_inodes[i].filename << std::endl;
-            filler(buf, g_kry_inodes[i].filename, NULL, 0, (fuse_fill_dir_flags)0);
+            std::string fname(g_kry_inodes[i].filename);
+
+            if (prefix.empty()) {
+                // Kök dizin: İçinde hiç '/' barındırmayanlar doğrudan kök elemanıdır
+                if (fname.find('/') == std::string::npos) {
+                    std::cout << "[FUSE DEBUG] Bulunan dosya/klasor (root): " << fname << std::endl;
+                    filler(buf, fname.c_str(), NULL, 0, (fuse_fill_dir_flags)0);
+                }
+            } else {
+                // Alt dizin: İlgili prefix ile başlayan dosyalar filtrelenir
+                if (fname.rfind(prefix, 0) == 0) {
+                    std::string sub_name = fname.substr(prefix.length());
+                    // Sadece doğrudan alt elemanlar listelenmeli (içinde fazladan '/' olmamalı)
+                    if (!sub_name.empty() && sub_name.find('/') == std::string::npos) {
+                        std::cout << "[FUSE DEBUG] Bulunan dosya/klasor (sub): " << sub_name << std::endl;
+                        filler(buf, sub_name.c_str(), NULL, 0, (fuse_fill_dir_flags)0);
+                    }
+                }
+            }
         }
     }
 
