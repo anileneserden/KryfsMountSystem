@@ -136,6 +136,26 @@ static int kfs_unlink(const char* path) {
     return -ENOENT;
 }
 
+// Dizin (klasör) silme
+static int kfs_rmdir(const char* path) {
+    const char* dirname = path + 1; // Baştaki '/' işaretini atla
+
+    for (size_t i = 0; i < g_kry_inodes.size(); i++) {
+        if (g_kry_inodes[i].is_used && g_kry_inodes[i].is_directory && std::strcmp(g_kry_inodes[i].filename, dirname) == 0) {
+            // Klasör inode alanını sıfırlayarak boşa çıkar
+            g_kry_inodes[i].is_used = 0;
+            g_kry_inodes[i].size = 0;
+            g_kry_inodes[i].first_block = 0;
+            g_kry_inodes[i].filename[0] = '\0';
+            
+            kryfs_save_image();
+            return 0;
+        }
+    }
+
+    return -ENOENT; // Dizin bulunamadı
+}
+
 // Yeni dizin (klasör) oluşturma
 static int kfs_mkdir(const char* path, mode_t mode) {
     const char* dirname = path + 1; // Baştaki '/' işaretini atla
@@ -176,5 +196,6 @@ void init_fuse_operations(struct fuse_operations* ops) {
     ops->read     = kfs_read;
     ops->unlink   = kfs_unlink;
     ops->mkdir    = kfs_mkdir;
+    ops->rmdir    = kfs_rmdir;
     ops->utimens  = kfs_utimens;
 }
