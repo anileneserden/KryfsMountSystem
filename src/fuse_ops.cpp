@@ -136,6 +136,32 @@ static int kfs_unlink(const char* path) {
     return -ENOENT;
 }
 
+// Yeni dizin (klasör) oluşturma
+static int kfs_mkdir(const char* path, mode_t mode) {
+    const char* dirname = path + 1; // Baştaki '/' işaretini atla
+
+    int free_index = -1;
+    for (size_t i = 0; i < g_kry_inodes.size(); i++) {
+        if (!g_kry_inodes[i].is_used) {
+            free_index = i;
+            break;
+        }
+    }
+
+    if (free_index == -1) return -ENOSPC; // Disk üzerinde boş inode kalmadı
+
+    g_kry_inodes[free_index].inode_id = free_index + 1;
+    g_kry_inodes[free_index].is_used = 1;
+    g_kry_inodes[free_index].is_directory = 1; // Klasör olduğunu belirtiyoruz
+    g_kry_inodes[free_index].size = 0;
+    g_kry_inodes[free_index].first_block = 0;
+    std::strncpy(g_kry_inodes[free_index].filename, dirname, MAX_FILENAME - 1);
+    g_kry_inodes[free_index].filename[MAX_FILENAME - 1] = '\0';
+
+    kryfs_save_image();
+    return 0;
+}
+
 // Zaman damgası güncelleme
 static int kfs_utimens(const char* path, const struct timespec tv[2], struct fuse_file_info* fi) {
     return 0;
@@ -149,5 +175,6 @@ void init_fuse_operations(struct fuse_operations* ops) {
     ops->write    = kfs_write;
     ops->read     = kfs_read;
     ops->unlink   = kfs_unlink;
+    ops->mkdir    = kfs_mkdir;
     ops->utimens  = kfs_utimens;
 }
