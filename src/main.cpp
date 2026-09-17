@@ -13,12 +13,62 @@ void print_usage(const char* prog_name) {
     std::cout << "Kullanım:\n";
     std::cout << "  Mount etmek için:   " << prog_name << " -m <disk_imaji.img> <montaj_dizini> [-d]\n";
     std::cout << "  Umount etmek için:  " << prog_name << " -u <montaj_dizini>\n";
+    std::cout << "  Formatlamak için:   " << prog_name << " <disk_imaji.img> --format\n";
 }
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         print_usage(argv[0]);
         return 1;
+    }
+
+    // FORMAT İŞLEMİ: ./kfs <disk_imaji> --format
+    if (argc >= 3 && std::string(argv[2]) == "--format") {
+        std::string img_path = argv[1];
+        std::cout << "[KRYFS] Disk formatlanıyor ve Superblock yazılıyor: " << img_path << std::endl;
+
+        // 1. İmaj dosyasını yazma/güncelleme modunda aç
+        FILE* img_file = std::fopen(img_path.c_str(), "rb+");
+        if (!img_file) {
+            std::cerr << "[KRYFS Hata] İmaj dosyası açılamadı: " << img_path << std::endl;
+            std::cerr << "Önce 'dd' komutu ile imaj dosyasını oluşturduğunuzdan emin olun." << std::endl;
+            return 1;
+        }
+
+        // Global imaj işaretçisini bağla
+        g_img_file = img_file;
+
+        // 2. Superblock Alanını Doğru Şekilde Doldur
+        g_kry_sb.magic = KRYFS_MAGIC; // kryfs.hpp içerisindeki gerçek sihirli imza
+        
+        // Eğer global inode vektörünün boyutu boşsa varsayılan bir değer ata (örn: 128)
+        if (g_kry_inodes.empty()) {
+            g_kry_inodes.resize(128);
+        }
+        g_kry_sb.inode_count = g_kry_inodes.size();
+
+        // 3. Dosyanın başına (offset 0) gidip Superblock'u yaz
+        std::fseek(img_file, 0, SEEK_SET);
+        std::fwrite(&g_kry_sb, sizeof(KryfsSuperblock), 1, img_file);
+
+        // 4. Global inode tablosunu sıfırla
+        for (size_t i = 0; i < g_kry_inodes.size(); i++) {
+            g_kry_inodes[i].is_used = 0;
+            g_kry_inodes[i].is_directory = 0;
+            g_kry_inodes[i].size = 0;
+            g_kry_inodes[i].first_block = 0;
+            g_kry_inodes[i].filename[0] = '\0';
+        }
+
+        // 5. Inode tablosunu imaj dosyasına kaydet
+        kryfs_save_image();
+
+        // 6. Dosyayı kapat
+        std::fclose(img_file);
+        g_img_file = nullptr;
+
+        std::cout << "[KRYFS] Disk başarıyla formatlandı ve Superblock oluşturuldu!" << std::endl;
+        return 0;
     }
 
     std::string mode = argv[1];
@@ -51,6 +101,7 @@ int main(int argc, char* argv[]) {
 
         // Disk imajını yükle
         if (!kryfs_load_image(img_path)) {
+            std::cerr << "[KRYFS Hata] İmaj yüklenemedi veya sihirli bayt (magic number) uyuşmuyor!" << std::endl;
             return 1;
         }
 
