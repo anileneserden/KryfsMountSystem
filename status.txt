@@ -1,0 +1,13 @@
+Üzerinde bulunulan dal: main
+Dalınız "origin/main" ile güncel.
+
+İzlenmeyen dosyalar:
+  (işlenecekler arasına koymak için "git add <dosya>..." kullanın)
+	.gitignore
+	CMakeLists.txt
+	include/
+	src/
+	status.txt
+
+işlemeye bir şey eklenmedi; ancak izlenmeyen dosyalar var
+  (izlemek için "git add" kullanın)
