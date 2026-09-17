@@ -116,6 +116,26 @@ static int kfs_read(const char* path, char* buf, size_t size, off_t offset, stru
     return -ENOENT;
 }
 
+// Dosya silme
+static int kfs_unlink(const char* path) {
+    const char* filename = path + 1;
+
+    for (size_t i = 0; i < g_kry_inodes.size(); i++) {
+        if (g_kry_inodes[i].is_used && std::strcmp(g_kry_inodes[i].filename, filename) == 0) {
+            // İnode alanını sıfırlayarak boşa çıkar
+            g_kry_inodes[i].is_used = 0;
+            g_kry_inodes[i].size = 0;
+            g_kry_inodes[i].first_block = 0;
+            g_kry_inodes[i].filename[0] = '\0';
+            
+            kryfs_save_image();
+            return 0;
+        }
+    }
+
+    return -ENOENT;
+}
+
 // Zaman damgası güncelleme
 static int kfs_utimens(const char* path, const struct timespec tv[2], struct fuse_file_info* fi) {
     return 0;
@@ -128,5 +148,6 @@ void init_fuse_operations(struct fuse_operations* ops) {
     ops->create   = kfs_create;
     ops->write    = kfs_write;
     ops->read     = kfs_read;
+    ops->unlink   = kfs_unlink;
     ops->utimens  = kfs_utimens;
 }
