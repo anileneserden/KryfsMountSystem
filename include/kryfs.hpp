@@ -8,27 +8,25 @@
 
 #define KRYFS_MAGIC 0x4B525946 // "KRYF"
 #define BLOCK_SIZE 512
-#define MAX_FILENAME 32
+#define KRYFS_MAX_FILENAME 32
 
 #pragma pack(push, 1)
 
 // Çekirdekteki kryfs_superblock_t ile birebir aynı
 struct KryfsSuperblock {
-    uint32_t magic;
-    uint32_t total_sectors;
-    uint32_t inode_count;
-    uint32_t block_size;
-    char volume_name[32];
+    uint32_t magic;              // Dosya sistemi imzası (0x4B525946)
+    uint32_t total_blocks;       // Toplam blok sayısı
+    uint32_t inode_table_block;  // Inode tablosunun başlangıç bloğu
+    uint32_t data_block_start;   // Veri bloklarının başlangıç bloğu
 };
 
 // Çekirdekteki kryfs_inode_t ile birebir aynı
 struct KryfsInode {
-    uint32_t inode_id;
-    char filename[MAX_FILENAME];
-    uint32_t size;
-    uint32_t first_block;
-    uint8_t is_used;
-    uint8_t is_directory;
+    uint8_t  is_used;                        // Bu inode dolu mu? (1 = Dolu, 0 = Boş)
+    uint8_t  is_directory;                   // Dizin mi, dosya mı?
+    uint32_t size;                           // Dosya boyutu (bayt cinsinden)
+    uint32_t start_block;                    // Verinin başladığı ilk blok indeksi
+    char     filename[KRYFS_MAX_FILENAME];   // Dosya veya klasör adı
 };
 
 #pragma pack(pop)

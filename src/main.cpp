@@ -38,25 +38,27 @@ int main(int argc, char* argv[]) {
         // Global imaj işaretçisini bağla
         g_img_file = img_file;
 
-        // 2. Superblock Alanını Doğru Şekilde Doldur
-        g_kry_sb.magic = KRYFS_MAGIC; // kryfs.hpp içerisindeki gerçek sihirli imza
-        
-        // Eğer global inode vektörünün boyutu boşsa varsayılan bir değer ata (örn: 128)
+        // 2. Superblock Alanını Çekirdek Yapısına Göre Doldur
+        g_kry_sb.magic = KRYFS_MAGIC; // 0x4B525946
+        g_kry_sb.total_blocks = 2048; // Örnek toplam blok sayısı
+        g_kry_sb.inode_table_block = 1; // Inode tablosu 1. bloktan (582. bayttan) başlar
+        g_kry_sb.data_block_start = 256; // Veri bloklarının başlangıcı
+
+        // Eğer global inode vektörünün boyutu boşsa varsayılan bir değer ata (örn: 64)
         if (g_kry_inodes.empty()) {
-            g_kry_inodes.resize(128);
+            g_kry_inodes.resize(64);
         }
-        g_kry_sb.inode_count = g_kry_inodes.size();
 
         // 3. Dosyanın başına (offset 0) gidip Superblock'u yaz
         std::fseek(img_file, 0, SEEK_SET);
         std::fwrite(&g_kry_sb, sizeof(KryfsSuperblock), 1, img_file);
 
-        // 4. Global inode tablosunu sıfırla
+        // 4. Global inode tablosunu sıfırla (first_block yerine start_block kullanılıyor)
         for (size_t i = 0; i < g_kry_inodes.size(); i++) {
             g_kry_inodes[i].is_used = 0;
             g_kry_inodes[i].is_directory = 0;
             g_kry_inodes[i].size = 0;
-            g_kry_inodes[i].first_block = 0;
+            g_kry_inodes[i].start_block = 0;
             g_kry_inodes[i].filename[0] = '\0';
         }
 

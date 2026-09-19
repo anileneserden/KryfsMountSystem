@@ -98,7 +98,7 @@ static int kfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
     return 0;
 }
 
-// Dosyadan okuma (Düzeltilmiş senkronizasyon ile)
+// Dosyadan okuma
 static int kfs_read(const char* path, char* buf, size_t size, off_t offset,
                     struct fuse_file_info* fi) {
     std::string target_path = path;
@@ -126,7 +126,7 @@ static int kfs_read(const char* path, char* buf, size_t size, off_t offset,
     if (size == 0) return 0;
     if (!g_img_file) return -EIO;
 
-    off_t disk_offset = (target_inode->first_block * BLOCK_SIZE) + offset;
+    off_t disk_offset = (target_inode->start_block * BLOCK_SIZE) + offset;
 
     // Tamponu temizle ve dosya tanımlayıcısını senkronize et
     std::fflush(g_img_file);
@@ -164,24 +164,21 @@ static int kfs_create(const char* path, mode_t mode, struct fuse_file_info* fi) 
 
     if (free_index == -1) return -ENOSPC;
 
-    g_kry_inodes[free_index].inode_id = free_index + 1;
     g_kry_inodes[free_index].is_used = 1;
     g_kry_inodes[free_index].is_directory = 0;
     g_kry_inodes[free_index].size = 0;
     
-    // ÇAKIŞMAYI ÖNLEMEK İÇİN GÜVENLİ BLOK OFSETİ:
-    // İlk 256 blok metadata (Superblock + Inode Tablosu) için ayrıldı.
-    // Veri blokları güvenli bir şekilde 256. bloktan (veya sonrasından) başlar.
-    g_kry_inodes[free_index].first_block = 256 + free_index;
+    // Güvenli blok ofseti (256. bloktan başlatılıyor)
+    g_kry_inodes[free_index].start_block = 256 + free_index;
     
-    std::strncpy(g_kry_inodes[free_index].filename, filename, MAX_FILENAME - 1);
-    g_kry_inodes[free_index].filename[MAX_FILENAME - 1] = '\0';
+    std::strncpy(g_kry_inodes[free_index].filename, filename, KRYFS_MAX_FILENAME - 1);
+    g_kry_inodes[free_index].filename[KRYFS_MAX_FILENAME - 1] = '\0';
 
     kryfs_save_image();
     return 0;
 }
 
-// Dosyaya yazma (Güçlendirilmiş disk flush ve fsync)
+// Dosyaya yazma
 static int kfs_write(const char* path, const char* buf, size_t size, off_t offset,
                      struct fuse_file_info* fi) {
     std::string target_path = path;
@@ -203,7 +200,7 @@ static int kfs_write(const char* path, const char* buf, size_t size, off_t offse
     if (!target_inode) return -ENOENT;
     if (!g_img_file) return -EIO;
 
-    off_t disk_offset = (target_inode->first_block * BLOCK_SIZE) + offset;
+    off_t disk_offset = (target_inode->start_block * BLOCK_SIZE) + offset;
 
     if (std::fseek(g_img_file, disk_offset, SEEK_SET) != 0) {
         return -EIO;
@@ -222,7 +219,7 @@ static int kfs_write(const char* path, const char* buf, size_t size, off_t offse
     std::fflush(g_img_file);
     fsync(fileno(g_img_file));
     
-    kryfs_save_image(); // Inode güncellemelerini de kaydet
+    kryfs_save_image(); // Inode güncellemelerini kaydet
 
     std::string written_content(buf, bytes_written);
     std::cout << "[FUSE DEBUG] kfs_write basarili: Yol=" << path 
@@ -240,7 +237,7 @@ static int kfs_unlink(const char* path) {
         if (g_kry_inodes[i].is_used && std::strcmp(g_kry_inodes[i].filename, filename) == 0) {
             g_kry_inodes[i].is_used = 0;
             g_kry_inodes[i].size = 0;
-            g_kry_inodes[i].first_block = 0;
+            g_kry_inodes[i].start_block = 0;
             g_kry_inodes[i].filename[0] = '\0';
             kryfs_save_image();
             return 0;
@@ -255,7 +252,7 @@ static int kfs_rmdir(const char* path) {
         if (g_kry_inodes[i].is_used && g_kry_inodes[i].is_directory && std::strcmp(g_kry_inodes[i].filename, dirname) == 0) {
             g_kry_inodes[i].is_used = 0;
             g_kry_inodes[i].size = 0;
-            g_kry_inodes[i].first_block = 0;
+            g_kry_inodes[i].start_block = 0;
             g_kry_inodes[i].filename[0] = '\0';
             kryfs_save_image();
             return 0;
@@ -275,13 +272,12 @@ static int kfs_mkdir(const char* path, mode_t mode) {
     }
     if (free_index == -1) return -ENOSPC;
 
-    g_kry_inodes[free_index].inode_id = free_index + 1;
     g_kry_inodes[free_index].is_used = 1;
     g_kry_inodes[free_index].is_directory = 1;
     g_kry_inodes[free_index].size = 0;
-    g_kry_inodes[free_index].first_block = 0;
-    std::strncpy(g_kry_inodes[free_index].filename, dirname, MAX_FILENAME - 1);
-    g_kry_inodes[free_index].filename[MAX_FILENAME - 1] = '\0';
+    g_kry_inodes[free_index].start_block = 0;
+    std::strncpy(g_kry_inodes[free_index].filename, dirname, KRYFS_MAX_FILENAME - 1);
+    g_kry_inodes[free_index].filename[KRYFS_MAX_FILENAME - 1] = '\0';
 
     kryfs_save_image();
     return 0;
