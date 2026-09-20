@@ -25,18 +25,37 @@ bool kryfs_load_image(const std::string& img_path) {
         return false;
     }
 
+    if (g_kry_sb.inode_table_block >= g_kry_sb.data_block_start ||
+        g_kry_sb.data_block_start >= g_kry_sb.total_blocks) {
+        std::cerr << "Hata: KRYFS bolum sinirlari gecersiz." << std::endl;
+        std::fclose(g_img_file);
+        g_img_file = nullptr;
+        return false;
+    }
+
     std::cout << "Superblock basariyla okundu." << std::endl;
     std::cout << "-> Toplam Blok Sayisi: " << g_kry_sb.total_blocks << std::endl;
     std::cout << "-> Inode Tablo Bloku: " << g_kry_sb.inode_table_block << std::endl;
 
-    // Sabit veya hesaplanan bir inode sayısı belirleyelim (Örneğin diskteki ilk alan için 64 veya 128 inode)
-    // Inode tablosunun kapladığı alana göre boyutu ayarlıyoruz (Örn: 1 blok veya sabit 64 adet)
-    size_t inode_count = 64; 
+    size_t inode_table_bytes =
+        (g_kry_sb.data_block_start - g_kry_sb.inode_table_block) * BLOCK_SIZE;
+    size_t inode_count = inode_table_bytes / sizeof(KryfsInode);
+    if (inode_count == 0) {
+        std::cerr << "Hata: KRYFS inode tablosu bos." << std::endl;
+        std::fclose(g_img_file);
+        g_img_file = nullptr;
+        return false;
+    }
     g_kry_inodes.resize(inode_count);
 
     // Inode tablosunu çekirdeğin bildirdiği bloktan (inode_table_block * BLOCK_SIZE) oku
     std::fseek(g_img_file, g_kry_sb.inode_table_block * BLOCK_SIZE, SEEK_SET);
-    std::fread(g_kry_inodes.data(), sizeof(KryfsInode), inode_count, g_img_file);
+    if (std::fread(g_kry_inodes.data(), sizeof(KryfsInode), inode_count, g_img_file) != inode_count) {
+        std::cerr << "Hata: KRYFS inode tablosu okunamadi." << std::endl;
+        std::fclose(g_img_file);
+        g_img_file = nullptr;
+        return false;
+    }
     
     // --- DEBUG: Aktif inode'ları kontrol et ---
     int active_count = 0;

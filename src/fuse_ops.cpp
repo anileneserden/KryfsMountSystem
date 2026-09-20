@@ -3,6 +3,7 @@
 #include <cstring>
 #include <errno.h>
 #include <iostream>
+#include <limits>
 #include <unistd.h>
 #include "kryfs.hpp"
 
@@ -150,9 +151,155 @@ static int kfs_read(const char* path, char* buf, size_t size, off_t offset,
     return bytes_read;
 }
 
+static uint32_t blocks_for_size(uint64_t size) {
+    return size == 0 ? 0 : static_cast<uint32_t>((size + BLOCK_SIZE - 1) / BLOCK_SIZE);
+}
+
+static bool ranges_overlap(uint32_t first_start, uint32_t first_blocks,
+                           uint32_t second_start, uint32_t second_blocks) {
+    uint64_t first_end = static_cast<uint64_t>(first_start) + first_blocks;
+    uint64_t second_end = static_cast<uint64_t>(second_start) + second_blocks;
+    return first_start < second_end && second_start < first_end;
+}
+
+static uint32_t find_free_extent(uint32_t required_blocks, int excluded_inode) {
+    if (required_blocks == 0 || required_blocks > g_kry_sb.total_blocks) return 0;
+
+    uint32_t first_data_block = g_kry_sb.data_block_start;
+    uint32_t last_start = g_kry_sb.total_blocks - required_blocks;
+
+    for (uint32_t candidate = first_data_block; candidate <= last_start; candidate++) {
+        bool occupied = false;
+        for (size_t i = 0; i < g_kry_inodes.size(); i++) {
+            if (static_cast<int>(i) == excluded_inode ||
+                !g_kry_inodes[i].is_used || g_kry_inodes[i].is_directory) {
+                continue;
+            }
+
+            uint32_t existing_blocks = blocks_for_size(g_kry_inodes[i].size);
+            if (existing_blocks > 0 &&
+                ranges_overlap(candidate, required_blocks,
+                               g_kry_inodes[i].start_block, existing_blocks)) {
+                occupied = true;
+                break;
+            }
+        }
+
+        if (!occupied) return candidate;
+    }
+
+    return 0;
+}
+
+static bool ensure_file_extent(KryfsInode* inode, int inode_index, uint64_t required_size) {
+    uint32_t required_blocks = blocks_for_size(required_size);
+    if (required_size > std::numeric_limits<uint32_t>::max() ||
+        required_blocks > g_kry_sb.total_blocks - g_kry_sb.data_block_start) {
+        return false;
+    }
+
+    uint32_t current_blocks = blocks_for_size(inode->size);
+    if (required_blocks == 0) {
+        inode->start_block = 0;
+        return true;
+    }
+
+    if (current_blocks >= required_blocks &&
+        inode->start_block >= g_kry_sb.data_block_start) {
+        return true;
+    }
+
+    uint32_t new_start = find_free_extent(required_blocks, inode_index);
+    if (new_start == 0) return false;
+
+    std::vector<char> old_data(inode->size);
+    if (inode->size > 0) {
+        if (inode->start_block < g_kry_sb.data_block_start ||
+            std::fseek(g_img_file, inode->start_block * BLOCK_SIZE, SEEK_SET) != 0 ||
+            std::fread(old_data.data(), 1, old_data.size(), g_img_file) != old_data.size()) {
+            return false;
+        }
+    }
+
+    if (std::fseek(g_img_file, new_start * BLOCK_SIZE, SEEK_SET) != 0) return false;
+    if (!old_data.empty() &&
+        std::fwrite(old_data.data(), 1, old_data.size(), g_img_file) != old_data.size()) {
+        return false;
+    }
+
+    inode->start_block = new_start;
+    return true;
+}
+
+static KryfsInode* find_inode_by_path(const char* path) {
+    std::string target_path = path;
+    if (target_path.rfind('/', 0) == 0) target_path = target_path.substr(1);
+
+    for (size_t i = 0; i < g_kry_inodes.size(); i++) {
+        if (g_kry_inodes[i].is_used &&
+            std::strcmp(g_kry_inodes[i].filename, target_path.c_str()) == 0) {
+            return &g_kry_inodes[i];
+        }
+    }
+
+    return nullptr;
+}
+
+static int kfs_access(const char* path, int mask) {
+    if (std::strcmp(path, "/") == 0 || find_inode_by_path(path)) return 0;
+    return -ENOENT;
+}
+
+static int kfs_flush(const char* path, struct fuse_file_info* fi) {
+    if (!g_img_file) return -EIO;
+    if (std::fflush(g_img_file) != 0 || fsync(fileno(g_img_file)) != 0) return -EIO;
+    return 0;
+}
+
+static int kfs_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
+    if (size < 0 || static_cast<uint64_t>(size) > std::numeric_limits<uint32_t>::max()) {
+        return -EFBIG;
+    }
+
+    KryfsInode* inode = find_inode_by_path(path);
+    if (!inode) return -ENOENT;
+    if (inode->is_directory) return -EISDIR;
+    if (!g_img_file) return -EIO;
+
+    uint32_t old_size = inode->size;
+    uint32_t new_size = static_cast<uint32_t>(size);
+    int inode_index = static_cast<int>(inode - g_kry_inodes.data());
+    if (!ensure_file_extent(inode, inode_index, new_size)) return -ENOSPC;
+
+    if (new_size > old_size) {
+        std::vector<char> padding(new_size - old_size, 0);
+        if (std::fseek(g_img_file, inode->start_block * BLOCK_SIZE + old_size, SEEK_SET) != 0 ||
+            std::fwrite(padding.data(), 1, padding.size(), g_img_file) != padding.size()) {
+            return -EIO;
+        }
+    }
+
+    inode->size = new_size;
+    kryfs_save_image();
+    return 0;
+}
+
+static int kfs_open(const char* path, struct fuse_file_info* fi) {
+    KryfsInode* inode = find_inode_by_path(path);
+    if (!inode) return -ENOENT;
+    if (inode->is_directory) return -EISDIR;
+
+    if ((fi->flags & O_TRUNC) != 0) {
+        return kfs_truncate(path, 0, fi);
+    }
+
+    return 0;
+}
+
 // Yeni dosya oluşturma
 static int kfs_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
     const char* filename = path + 1;
+    if (std::strlen(filename) >= KRYFS_MAX_FILENAME) return -ENAMETOOLONG;
 
     int free_index = -1;
     for (size_t i = 0; i < g_kry_inodes.size(); i++) {
@@ -168,8 +315,7 @@ static int kfs_create(const char* path, mode_t mode, struct fuse_file_info* fi) 
     g_kry_inodes[free_index].is_directory = 0;
     g_kry_inodes[free_index].size = 0;
     
-    // Güvenli blok ofseti (256. bloktan başlatılıyor)
-    g_kry_inodes[free_index].start_block = 256 + free_index;
+    g_kry_inodes[free_index].start_block = 0;
     
     std::strncpy(g_kry_inodes[free_index].filename, filename, KRYFS_MAX_FILENAME - 1);
     g_kry_inodes[free_index].filename[KRYFS_MAX_FILENAME - 1] = '\0';
@@ -199,6 +345,24 @@ static int kfs_write(const char* path, const char* buf, size_t size, off_t offse
 
     if (!target_inode) return -ENOENT;
     if (!g_img_file) return -EIO;
+
+    if (offset < 0 || static_cast<uint64_t>(offset) >
+        std::numeric_limits<uint32_t>::max() - size) {
+        return -EFBIG;
+    }
+
+    int inode_index = static_cast<int>(target_inode - g_kry_inodes.data());
+    uint64_t required_size = static_cast<uint64_t>(offset) + size;
+    uint32_t old_size = target_inode->size;
+    if (!ensure_file_extent(target_inode, inode_index, required_size)) return -ENOSPC;
+
+    if (offset > old_size) {
+        std::vector<char> padding(static_cast<size_t>(offset - old_size), 0);
+        if (std::fseek(g_img_file, target_inode->start_block * BLOCK_SIZE + old_size, SEEK_SET) != 0 ||
+            std::fwrite(padding.data(), 1, padding.size(), g_img_file) != padding.size()) {
+            return -EIO;
+        }
+    }
 
     off_t disk_offset = (target_inode->start_block * BLOCK_SIZE) + offset;
 
@@ -263,6 +427,7 @@ static int kfs_rmdir(const char* path) {
 
 static int kfs_mkdir(const char* path, mode_t mode) {
     const char* dirname = path + 1;
+    if (std::strlen(dirname) >= KRYFS_MAX_FILENAME) return -ENAMETOOLONG;
     int free_index = -1;
     for (size_t i = 0; i < g_kry_inodes.size(); i++) {
         if (!g_kry_inodes[i].is_used) {
@@ -289,7 +454,9 @@ static int kfs_utimens(const char* path, const struct timespec tv[2], struct fus
 
 void init_fuse_operations(struct fuse_operations* ops) {
     ops->init     = kfs_init;
+    ops->access   = kfs_access;
     ops->getattr  = kfs_getattr;
+    ops->open     = kfs_open;
     ops->readdir  = kfs_readdir;
     ops->create   = kfs_create;
     ops->write    = kfs_write;
@@ -298,4 +465,6 @@ void init_fuse_operations(struct fuse_operations* ops) {
     ops->mkdir    = kfs_mkdir;
     ops->rmdir    = kfs_rmdir;
     ops->utimens  = kfs_utimens;
+    ops->truncate = kfs_truncate;
+    ops->flush    = kfs_flush;
 }

@@ -8,7 +8,7 @@
 
 #define KRYFS_MAGIC 0x4B525946 // "KRYF"
 #define BLOCK_SIZE 512
-#define KRYFS_MAX_FILENAME 32
+#define KRYFS_MAX_FILENAME 256
 
 #pragma pack(push, 1)
 

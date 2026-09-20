@@ -27,29 +27,32 @@ int main(int argc, char* argv[]) {
         std::string img_path = argv[1];
         std::cout << "[KRYFS] Disk formatlanıyor ve Superblock yazılıyor: " << img_path << std::endl;
 
-        // 1. İmaj dosyasını yazma/güncelleme modunda aç
-        FILE* img_file = std::fopen(img_path.c_str(), "rb+");
+        // Format işlemi imajı oluşturur veya mevcut içeriği sıfırlar.
+        FILE* img_file = std::fopen(img_path.c_str(), "wb+");
         if (!img_file) {
             std::cerr << "[KRYFS Hata] İmaj dosyası açılamadı: " << img_path << std::endl;
-            std::cerr << "Önce 'dd' komutu ile imaj dosyasını oluşturduğunuzdan emin olun." << std::endl;
             return 1;
         }
 
         // Global imaj işaretçisini bağla
         g_img_file = img_file;
 
-        // 2. Superblock Alanını Çekirdek Yapısına Göre Doldur
+        // 2. Superblock alanını kernel formatıyla aynı şekilde doldur.
         g_kry_sb.magic = KRYFS_MAGIC; // 0x4B525946
-        g_kry_sb.total_blocks = 2048; // Örnek toplam blok sayısı
-        g_kry_sb.inode_table_block = 1; // Inode tablosu 1. bloktan (582. bayttan) başlar
-        g_kry_sb.data_block_start = 256; // Veri bloklarının başlangıcı
+        g_kry_sb.total_blocks = 2048;
+        g_kry_sb.inode_table_block = 1;
+        g_kry_sb.data_block_start = 256;
 
-        // Eğer global inode vektörünün boyutu boşsa varsayılan bir değer ata (örn: 64)
-        if (g_kry_inodes.empty()) {
-            g_kry_inodes.resize(64);
-        }
+        size_t inode_table_bytes =
+            (g_kry_sb.data_block_start - g_kry_sb.inode_table_block) * BLOCK_SIZE;
+        g_kry_inodes.clear();
+        g_kry_inodes.resize(inode_table_bytes / sizeof(KryfsInode));
 
-        // 3. Dosyanın başına (offset 0) gidip Superblock'u yaz
+        // İmajı toplam blok boyutuna getir.
+        std::fseek(img_file, (g_kry_sb.total_blocks * BLOCK_SIZE) - 1, SEEK_SET);
+        std::fputc(0, img_file);
+
+        // 3. Dosyanın başına gidip superblock'u ve sıfır inode tablosunu yaz.
         std::fseek(img_file, 0, SEEK_SET);
         std::fwrite(&g_kry_sb, sizeof(KryfsSuperblock), 1, img_file);
 
