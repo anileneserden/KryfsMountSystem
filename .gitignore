@@ -3,5 +3,5 @@ mnt/
 *.txt
 CMakeFiles/
 cmake_install.cmake
-kfs
+lfs
 Makefile

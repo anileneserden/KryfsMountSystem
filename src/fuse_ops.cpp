@@ -5,11 +5,11 @@
 #include <iostream>
 #include <limits>
 #include <unistd.h>
-#include "kryfs.hpp"
+#include "lnrfs.hpp"
 
 // Dosya sistemi ilk mount edildiğinde çalışır
 static void* kfs_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
-    std::cout << "[FUSE DEBUG] KRYFS dosya sistemi basariyla monte edildi." << std::endl;
+    std::cout << "[FUSE DEBUG] LNRFS dosya sistemi basariyla monte edildi." << std::endl;
     return nullptr;
 }
 
@@ -107,7 +107,7 @@ static int kfs_read(const char* path, char* buf, size_t size, off_t offset,
         target_path = target_path.substr(1);
     }
 
-    KryfsInode* target_inode = nullptr;
+    LnrfsInode* target_inode = nullptr;
     for (size_t i = 0; i < g_kry_inodes.size(); i++) {
         g_kry_inodes[i].filename[sizeof(g_kry_inodes[i].filename) - 1] = '\0';
         if (g_kry_inodes[i].is_used && !g_kry_inodes[i].is_directory) {
@@ -191,7 +191,7 @@ static uint32_t find_free_extent(uint32_t required_blocks, int excluded_inode) {
     return 0;
 }
 
-static bool ensure_file_extent(KryfsInode* inode, int inode_index, uint64_t required_size) {
+static bool ensure_file_extent(LnrfsInode* inode, int inode_index, uint64_t required_size) {
     uint32_t required_blocks = blocks_for_size(required_size);
     if (required_size > std::numeric_limits<uint32_t>::max() ||
         required_blocks > g_kry_sb.total_blocks - g_kry_sb.data_block_start) {
@@ -231,7 +231,7 @@ static bool ensure_file_extent(KryfsInode* inode, int inode_index, uint64_t requ
     return true;
 }
 
-static KryfsInode* find_inode_by_path(const char* path) {
+static LnrfsInode* find_inode_by_path(const char* path) {
     std::string target_path = path;
     if (target_path.rfind('/', 0) == 0) target_path = target_path.substr(1);
 
@@ -261,7 +261,7 @@ static int kfs_truncate(const char* path, off_t size, struct fuse_file_info* fi)
         return -EFBIG;
     }
 
-    KryfsInode* inode = find_inode_by_path(path);
+    LnrfsInode* inode = find_inode_by_path(path);
     if (!inode) return -ENOENT;
     if (inode->is_directory) return -EISDIR;
     if (!g_img_file) return -EIO;
@@ -280,12 +280,12 @@ static int kfs_truncate(const char* path, off_t size, struct fuse_file_info* fi)
     }
 
     inode->size = new_size;
-    kryfs_save_image();
+    lnrfs_save_image();
     return 0;
 }
 
 static int kfs_open(const char* path, struct fuse_file_info* fi) {
-    KryfsInode* inode = find_inode_by_path(path);
+    LnrfsInode* inode = find_inode_by_path(path);
     if (!inode) return -ENOENT;
     if (inode->is_directory) return -EISDIR;
 
@@ -299,7 +299,7 @@ static int kfs_open(const char* path, struct fuse_file_info* fi) {
 // Yeni dosya oluşturma
 static int kfs_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
     const char* filename = path + 1;
-    if (std::strlen(filename) >= KRYFS_MAX_FILENAME) return -ENAMETOOLONG;
+    if (std::strlen(filename) >= LNRFS_MAX_FILENAME) return -ENAMETOOLONG;
 
     int free_index = -1;
     for (size_t i = 0; i < g_kry_inodes.size(); i++) {
@@ -317,10 +317,10 @@ static int kfs_create(const char* path, mode_t mode, struct fuse_file_info* fi) 
     
     g_kry_inodes[free_index].start_block = 0;
     
-    std::strncpy(g_kry_inodes[free_index].filename, filename, KRYFS_MAX_FILENAME - 1);
-    g_kry_inodes[free_index].filename[KRYFS_MAX_FILENAME - 1] = '\0';
+    std::strncpy(g_kry_inodes[free_index].filename, filename, LNRFS_MAX_FILENAME - 1);
+    g_kry_inodes[free_index].filename[LNRFS_MAX_FILENAME - 1] = '\0';
 
-    kryfs_save_image();
+    lnrfs_save_image();
     return 0;
 }
 
@@ -332,7 +332,7 @@ static int kfs_write(const char* path, const char* buf, size_t size, off_t offse
         target_path = target_path.substr(1);
     }
 
-    KryfsInode* target_inode = nullptr;
+    LnrfsInode* target_inode = nullptr;
     for (size_t i = 0; i < g_kry_inodes.size(); i++) {
         g_kry_inodes[i].filename[sizeof(g_kry_inodes[i].filename) - 1] = '\0';
         if (g_kry_inodes[i].is_used && !g_kry_inodes[i].is_directory) {
@@ -383,7 +383,7 @@ static int kfs_write(const char* path, const char* buf, size_t size, off_t offse
     std::fflush(g_img_file);
     fsync(fileno(g_img_file));
     
-    kryfs_save_image(); // Inode güncellemelerini kaydet
+    lnrfs_save_image(); // Inode güncellemelerini kaydet
 
     std::string written_content(buf, bytes_written);
     std::cout << "[FUSE DEBUG] kfs_write basarili: Yol=" << path 
@@ -403,7 +403,7 @@ static int kfs_unlink(const char* path) {
             g_kry_inodes[i].size = 0;
             g_kry_inodes[i].start_block = 0;
             g_kry_inodes[i].filename[0] = '\0';
-            kryfs_save_image();
+            lnrfs_save_image();
             return 0;
         }
     }
@@ -418,7 +418,7 @@ static int kfs_rmdir(const char* path) {
             g_kry_inodes[i].size = 0;
             g_kry_inodes[i].start_block = 0;
             g_kry_inodes[i].filename[0] = '\0';
-            kryfs_save_image();
+            lnrfs_save_image();
             return 0;
         }
     }
@@ -427,7 +427,7 @@ static int kfs_rmdir(const char* path) {
 
 static int kfs_mkdir(const char* path, mode_t mode) {
     const char* dirname = path + 1;
-    if (std::strlen(dirname) >= KRYFS_MAX_FILENAME) return -ENAMETOOLONG;
+    if (std::strlen(dirname) >= LNRFS_MAX_FILENAME) return -ENAMETOOLONG;
     int free_index = -1;
     for (size_t i = 0; i < g_kry_inodes.size(); i++) {
         if (!g_kry_inodes[i].is_used) {
@@ -441,10 +441,10 @@ static int kfs_mkdir(const char* path, mode_t mode) {
     g_kry_inodes[free_index].is_directory = 1;
     g_kry_inodes[free_index].size = 0;
     g_kry_inodes[free_index].start_block = 0;
-    std::strncpy(g_kry_inodes[free_index].filename, dirname, KRYFS_MAX_FILENAME - 1);
-    g_kry_inodes[free_index].filename[KRYFS_MAX_FILENAME - 1] = '\0';
+    std::strncpy(g_kry_inodes[free_index].filename, dirname, LNRFS_MAX_FILENAME - 1);
+    g_kry_inodes[free_index].filename[LNRFS_MAX_FILENAME - 1] = '\0';
 
-    kryfs_save_image();
+    lnrfs_save_image();
     return 0;
 }
 

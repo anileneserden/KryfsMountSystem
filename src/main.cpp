@@ -4,7 +4,7 @@
 #include <cstring>
 #include <vector>
 #include <cstdlib>
-#include "kryfs.hpp"
+#include "lnrfs.hpp"
 
 // fuse_ops.cpp içerisindeki operasyon bağlayıcı fonksiyon
 void init_fuse_operations(struct fuse_operations* ops);
@@ -25,12 +25,12 @@ int main(int argc, char* argv[]) {
     // FORMAT İŞLEMİ: ./kfs <disk_imaji> --format
     if (argc >= 3 && std::string(argv[2]) == "--format") {
         std::string img_path = argv[1];
-        std::cout << "[KRYFS] Disk formatlanıyor ve Superblock yazılıyor: " << img_path << std::endl;
+        std::cout << "[LNRFS] Disk formatlanıyor ve Superblock yazılıyor: " << img_path << std::endl;
 
         // Format işlemi imajı oluşturur veya mevcut içeriği sıfırlar.
         FILE* img_file = std::fopen(img_path.c_str(), "wb+");
         if (!img_file) {
-            std::cerr << "[KRYFS Hata] İmaj dosyası açılamadı: " << img_path << std::endl;
+            std::cerr << "[LNRFS Hata] İmaj dosyası açılamadı: " << img_path << std::endl;
             return 1;
         }
 
@@ -38,7 +38,7 @@ int main(int argc, char* argv[]) {
         g_img_file = img_file;
 
         // 2. Superblock alanını kernel formatıyla aynı şekilde doldur.
-        g_kry_sb.magic = KRYFS_MAGIC; // 0x4B525946
+        g_kry_sb.magic = LNRFS_MAGIC; // 0x4B525946
         g_kry_sb.total_blocks = 2048;
         g_kry_sb.inode_table_block = 1;
         g_kry_sb.data_block_start = 256;
@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
         size_t inode_table_bytes =
             (g_kry_sb.data_block_start - g_kry_sb.inode_table_block) * BLOCK_SIZE;
         g_kry_inodes.clear();
-        g_kry_inodes.resize(inode_table_bytes / sizeof(KryfsInode));
+        g_kry_inodes.resize(inode_table_bytes / sizeof(LnrfsInode));
 
         // İmajı toplam blok boyutuna getir.
         std::fseek(img_file, (g_kry_sb.total_blocks * BLOCK_SIZE) - 1, SEEK_SET);
@@ -54,7 +54,7 @@ int main(int argc, char* argv[]) {
 
         // 3. Dosyanın başına gidip superblock'u ve sıfır inode tablosunu yaz.
         std::fseek(img_file, 0, SEEK_SET);
-        std::fwrite(&g_kry_sb, sizeof(KryfsSuperblock), 1, img_file);
+        std::fwrite(&g_kry_sb, sizeof(LnrfsSuperblock), 1, img_file);
 
         // 4. Global inode tablosunu sıfırla (first_block yerine start_block kullanılıyor)
         for (size_t i = 0; i < g_kry_inodes.size(); i++) {
@@ -66,13 +66,13 @@ int main(int argc, char* argv[]) {
         }
 
         // 5. Inode tablosunu imaj dosyasına kaydet
-        kryfs_save_image();
+        lnrfs_save_image();
 
         // 6. Dosyayı kapat
         std::fclose(img_file);
         g_img_file = nullptr;
 
-        std::cout << "[KRYFS] Disk başarıyla formatlandı ve Superblock oluşturuldu!" << std::endl;
+        std::cout << "[LNRFS] Disk başarıyla formatlandı ve Superblock oluşturuldu!" << std::endl;
         return 0;
     }
 
@@ -105,8 +105,8 @@ int main(int argc, char* argv[]) {
         }
 
         // Disk imajını yükle
-        if (!kryfs_load_image(img_path)) {
-            std::cerr << "[KRYFS Hata] İmaj yüklenemedi veya sihirli bayt (magic number) uyuşmuyor!" << std::endl;
+        if (!lnrfs_load_image(img_path)) {
+            std::cerr << "[LNRFS Hata] İmaj yüklenemedi veya sihirli bayt (magic number) uyuşmuyor!" << std::endl;
             return 1;
         }
 
@@ -120,9 +120,9 @@ int main(int argc, char* argv[]) {
         if (debug_mode) {
             fuse_argv.push_back(flag_f);
             fuse_argv.push_back(flag_d);
-            std::cout << "KryfsMountSystem DEBUG modunda ön planda başlatılıyor..." << std::endl;
+            std::cout << "LnrfsMountSystem DEBUG modunda ön planda başlatılıyor..." << std::endl;
         } else {
-            std::cout << "KryfsMountSystem arka planda başlatılıyor..." << std::endl;
+            std::cout << "LnrfsMountSystem arka planda başlatılıyor..." << std::endl;
         }
         
         fuse_argv.push_back(argv[3]); // mount_point
@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
         int ret = fuse_main(fuse_argv.size(), fuse_argv.data(), &ops, NULL);
 
         // Çıkışta imajı güvenli kapat
-        kryfs_close_image();
+        lnrfs_close_image();
 
         return ret;
     }

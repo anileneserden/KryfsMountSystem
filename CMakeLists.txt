@@ -12,11 +12,11 @@ include_directories(include ${FUSE3_INCLUDE_DIRS})
 link_directories(${FUSE3_LIBRARY_DIRS})
 
 # Kaynak dosyalar (src/ altındakiler)
-add_executable(kfs 
+add_executable(lfs 
     src/main.cpp 
-    src/kryfs.cpp 
+    src/lnrfs.cpp 
     src/fuse_ops.cpp
 )
 
-target_link_libraries(kfs ${FUSE3_LIBRARIES})
-target_compile_options(kfs PRIVATE ${FUSE3_CFLAGS_OTHER})
+target_link_libraries(lfs ${FUSE3_LIBRARIES})
+target_compile_options(lfs PRIVATE ${FUSE3_CFLAGS_OTHER})
